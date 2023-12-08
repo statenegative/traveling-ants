@@ -4,8 +4,8 @@
 # and with small modifications can solve other related shortest-path algorithms.
 #
 # Author: Julia Kaeppel
-
 import math
+import matplotlib.pyplot as plt
 import numpy as np
 import random
 import typing
@@ -33,7 +33,7 @@ def tsp_aco(cities: set(City), alpha: float, beta: float, rho: float, Q_3: float
     shortest_dist = np.inf
 
     # Run each cycle of the simulation
-    for _ in range(cycles):
+    for cycle in range(cycles):
         # Initialize next tau matrix with pheromone evaporation
         tau_next = tau * rho
 
@@ -59,7 +59,15 @@ def tsp_aco(cities: set(City), alpha: float, beta: float, rho: float, Q_3: float
             if L < shortest_dist:
                 shortest_path = path
                 shortest_dist = L
+                converged_cycle = cycle
+        
+        # Update tau
+        tau = tau_next
     
+    # Print useful info
+    print(f"Path length: {shortest_dist}")
+    print(f"Converged on cycle {converged_cycle + 1}")
+
     return [cities[shortest_path[0][0]]] + [cities[edge[1]] for edge in shortest_path]
 
 def path_len(cities: dict[int, City], path: list[tuple[int, int]]) -> float:
@@ -153,13 +161,28 @@ def dist(a: City, b: City) -> float:
     return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
 
 def main():
-    cities = { (0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (1, 1), (1, 2), (1, 3), (2, 0), (2, 1), (2, 2), (2, 3), (3, 0), (3, 1), (3, 2), (3, 3) }
+    #cities = { (0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (1, 1), (1, 2), (1, 3), (2, 0), (2, 1), (2, 2), (2, 3), (3, 0), (3, 1), (3, 2), (3, 3) }
     alpha = 1.25
     beta = 4
     rho = 0.7
     Q_3 = 100
-    cycles = 100
-    print(tsp_aco(cities, alpha, beta, rho, Q_3, cycles))
+    cycles = 250
+
+    # Generate cities
+    n = 50
+    cities = set()
+    for i in range(n):
+        cities.add((random.random(), random.random()))
+
+    # Find shortest path
+    sp = tsp_aco(cities, alpha, beta, rho, Q_3, cycles)
+
+    # Plot path
+    for i in range(1, len(sp)):
+        plt.plot((sp[i - 1][0], sp[i][0]), (sp[i - 1][1], sp[i][1]), 'ko--')
+    plt.plot((sp[0][0], sp[-1][0]), (sp[0][1], sp[-1][1]), 'ko--')
+
+    plt.show()
 
 if __name__ == "__main__":
     main()
