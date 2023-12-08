@@ -1,96 +1,165 @@
+# This program implements the "ant-cycle" ant colony optimization algorithm
+# described by Colorni, et al. in "Distributed Optimization by Ant Colonies".
+# This algorithm can be used to heuristically solve the traveling salesman problem,
+# and with small modifications can solve other related shortest-path algorithms.
+#
 # Author: Julia Kaeppel
+
+import math
 import numpy as np
 import random
 import typing
 
+# A City is a tuple representing an (x, y) coordinate.
 City = tuple[float, float]
 
-# Heuristic ant colony optimization solution to the TSP.
-# The edge selection and pheromone update procedures are taken from
-# https://en.wikipedia.org/wiki/Ant_colony_optimization_algorithms.
+# Heuristically solves the traveling salesman problem using the ant-cycle ant
+# colony optimization algorithm.
 #
-# cities: Set of all cities to be traveled between.
-# n_iters: Number of iterations to run the simulation for.
-# m: Number of ants in the simulation.
-# alpha: Controls the influence of tau_xy, the pheromone strength of edge xy. 0 <= alpha.
-# beta: Controls the influence of eta_xy=1/d_xy, where d_xy is the length of edge xy. 1 <= beta.
-# rho: The pheromone evaporation coefficient. 0 <= rho <= 1.
-# Q: Q is a constant.
-# Returns a traversal order. 
-def tsp_aco(cities: set[City], n_iters: int=100, m: int=100, alpha: float=1.0, beta: float=1.0, rho: float=0.1, Q: float=1.0) -> list[City]:
-    # Convert cities to ordered list
-    cities = list(cities)
-    # Matrix of pheromone strengths
-    tau = np.zeros((len(cities), len(cities)))
-    # Set of ants, starting at random cities
-    ants = {cities[random.randrange(len(cities))] for _ in range(m)}
+# cities: A set of cities to find the shortest path between.
+# alpha: The relative weight of pheromone strengths.
+# beta: The relative weight of distances.
+# rho: The evaporation coefficient of pheromones.
+# Q_3: The weight of pheromones deposited by ants.
+# cycles: The number of iterations to run.
+def tsp_aco(cities: set(City), alpha: float, beta: float, rho: float, Q_3: float, cycles: int) -> list[City]:
+    # Number cities
+    cities = dict(enumerate(cities))
+    n = len(cities)
+    # Initialize tau matrix with values of 1.0
+    tau = np.full((n, n), 1.0)
 
-    # Perform iterations
-    for _ in n_iters:
-        pass
+    # Keep track of shortest path
+    shortest_dist = np.inf
 
-# Performs a tour of the graph with one ant.
+    # Run each cycle of the simulation
+    for _ in range(cycles):
+        # Initialize next tau matrix with pheromone evaporation
+        tau_next = tau * rho
+
+        # Start at each city
+        for i in range(n):
+            unvisited = cities.copy()
+            path = []
+
+            # Iterate until all cities have been visited
+            while len(unvisited) > 1:
+                # Select edge, add it to the path, remove city from unvisited, and move ant
+                j = choose_edge(unvisited, tau, alpha, beta, i)
+                path.append((i, j))
+                del unvisited[i]
+                i = j
+            
+            # Update new tau matrix
+            L = path_len(cities, path)
+            for edge in path:
+                tau_next[edge[0], edge[1]] += Q_3 / L
+
+            # Update shortest path if one was found
+            if L < shortest_dist:
+                shortest_path = path
+                shortest_dist = L
+    
+    return [cities[shortest_path[0][0]]] + [cities[edge[1]] for edge in shortest_path]
+
+def path_len(cities: dict[int, City], path: list[tuple[int, int]]) -> float:
+    # Initialize length to the distance to return to the starting city
+    length = dist(cities[path[0][0]], cities[path[-1][1]])
+    # Add length of each edge to total length
+    for edge in path:
+        length += dist(cities[edge[0]], cities[edge[1]])
+
+    return length
+
+# Randomly selects an edge from city i.
 #
-# ant: The starting/ending point of the ant.
-# cities: An ordered list of cities.
-# tau: A matrix of pheromone strengths, corresponding to cities.
-# alpha: Controls the influence of tau_xy.
-# beta: Controls the influence of eta_xy.
-# Q: Q is a constant.
-# tau_next: A matrix of updated pheromone strengths.
-# Returns the traversed path and its cost.
-def __update_ant(ant: City, cities: list[City], tau: np.ndarray, alpha: float, beta: float, Q: float, tau_next: np.ndarray) -> tuple[list[City], float]:
-    city_indices = {city: i for i, city in enumerate(cities)}
-    # Create traversed path and set of unvisited cities
-    path = [ant]
-    unvisited = city_indices
-    del unvisited[ant]
+# cities: A map of unvisited cities (including city i).
+# tau: The pheromone weights for each edge.
+# alpha: The relative weight of pheromone strengths.
+# beta: The relative weight of distances.
+# i: The index of the origin city of the edge.
+# Returns the index of the destination city of the edge.
+def choose_edge(cities: dict[int, City], tau: np.ndarray, alpha: float, beta: float, i: int) -> int:
+    # Select a random number in the range 0.0 <= r < 1.0
+    r = random.random()
+    # Calculate sum of weights
+    ws = weight_sum(cities, tau, alpha, beta, i)
 
-    # Local starting city index
-    x = city_indices[ant]
-    # Cost of this tour
-    L = 0.0
+    # Keep track of current accumulated probability
+    prob_sum = 0.0
+    for j in cities.keys():
+        # Skip edge from city to itself
+        if j == i:
+            continue
 
-    # Traverse the graph
-    while unvisited:
-        # Compute total weight for city x
-        weighted_sum = 0.0
-        for z in unvisited.values():
-            eta = 1.0 / __dist(cities[x], cities[z])
-            weighted_sum = (alpha * tau[x,z]) * (beta * eta)
-        
-        # Select city from weighted random distribution
-        r = random.random()
-        prob_sum = 0.0
-        for y in unvisited.values():
-            d = __dist(cities[x], cities[y])
-            eta = 1.0 / d
-            prob = (alpha * tau[x,y]) * (beta * eta) / weighted_sum
-            # Check whether city has been found
-            if r >= prob_sum and r < prob_sum + prob:
-                # City y is selected, update cost
-                L += d
-                break
-            prob_sum += prob
-        
-        # Append chosen city to path
-        path.append(cities[y])
+        # Increment accumulated probability until random value is selected
+        p = prob(cities, ws, tau, alpha, beta, i, j)
+        prob_sum += p
+        if prob_sum >= r:
+            break
+    return j
 
-        # Update current city
-        x = y
+# Calculates the weighted probability of selecting the edge from city i to city j.
+#
+# cities: A map of unvisited cities.
+# tau: The pheromone weights for each edge.
+# alpha: The relative weight of pheromone strengths.
+# beta: The relative weight of distances.
+# i: The index of the origin city of the edge.
+# j: The index of the destination city of the edge.
+# Returns the probability of the edge being selected.
+def prob(cities: dict[int, City], weight_sum: float, tau: np.ndarray, alpha: float, beta: float, i: int, j: int) -> float:
+    return weight(cities, tau, alpha, beta, i, j) / weight_sum
+
+# Calculates the sum of weights of the edges between one city and all other unvisited cities.
+#
+# cities: A map of unvisited cities.
+# tau: The pheromone weights for each edge.
+# alpha: The relative weight of pheromone strengths.
+# beta: The relative weight of distances.
+# i: The index of the origin city.
+# Returns the sum of weights.
+def weight_sum(cities: dict[int, City], tau: np.ndarray, alpha: float, beta: float, i: int) -> float:
+    return sum([weight(cities, tau, alpha, beta, i, j) for j in cities.keys() if j != i])
     
-    # Add cost of returning to starting city
-    L += __dist(path[-1], path[0])
-    
-    # Update tau_next
-    for i in range(len(path)):
-        x = city_indices[path[i]]
-        y = city_indices[path[(i+1) % len(path)]]
-        tau_next[x,y] += Q / L
-    
-    # Return traversed path and its cost
-    return path, L
+
+# Calculates the weight of the edge from city i to city j.
+#
+# cities: A map of unvisited cities.
+# tau: The pheromone weights for each edge.
+# alpha: The relative weight of pheromone strengths.
+# beta: The relative weight of distances.
+# i: The index of the origin city of the edge.
+# j: The index of the destination city of the edge.
+# Returns the weight of the specified edge.
+def weight(cities: dict[int, City], tau: np.ndarray, alpha: float, beta: float, i: int, j: int) -> float:
+    return (tau[i, j] ** alpha) * (eta(cities, i, j) ** beta)
+
+# Calculates the visibility between two cities, which is the inverse of their distance.
+#
+# cities: A map of unvisited cities.
+# i: The index of the first city. 
+# j: The index of the second city.
+# Returns the visibility between the two cities.
+def eta(cities: dict[int, City], i: int, j: int) -> float:
+    return 1.0 / dist(cities[i], cities[j])
 
 # Calculates the distance between two cities.
-def __dist(a: tuple[float, float], b: tuple[float, float]) -> float:
-    return math.sqrt((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2)
+#
+# a: The first city.
+# b: The second city.
+# Returns the distance between the two cities.
+def dist(a: City, b: City) -> float:
+    return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
+
+def main():
+    cities = { (0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (1, 1), (1, 2), (1, 3), (2, 0), (2, 1), (2, 2), (2, 3), (3, 0), (3, 1), (3, 2), (3, 3) }
+    alpha = 1.25
+    beta = 4
+    rho = 0.7
+    Q_3 = 100
+    cycles = 100
+    print(tsp_aco(cities, alpha, beta, rho, Q_3, cycles))
+
+if __name__ == "__main__":
+    main()
